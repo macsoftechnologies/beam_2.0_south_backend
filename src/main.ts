@@ -11,11 +11,13 @@ import { setupSwagger } from './swagger/swagger.setup';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('PORT') ?? 3001;
+  const port = configService.get<number>('PORT') ?? 3200;
   app.enableCors({ origin: '*' });
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true, }),);
   app.enableCors();
-  app.use(express.static(join(process.cwd(), './uploads/')));
+  app.use('/subcontractors', express.static(join(process.cwd(), './uploads/subcontractors')));
+  app.use('/uploads', express.static(join(process.cwd(), './uploads')));
+  app.use(express.static(join(process.cwd(), './uploads')));
   app.use(bodyParser.json({ limit: '100mb' }));
   app.use(bodyParser.urlencoded({ limit: '500mb', extended: true }));
   setupSwagger(app);

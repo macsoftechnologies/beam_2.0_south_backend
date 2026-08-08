@@ -14,7 +14,7 @@ export class RedisCacheService {
   constructor(
     @Inject(CACHE_MANAGER)
     private cacheManager: Cache,
-  ) { }
+  ) {}
 
   async getOrSet<T>(
     key: string,

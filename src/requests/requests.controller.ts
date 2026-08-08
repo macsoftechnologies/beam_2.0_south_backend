@@ -43,24 +43,23 @@ export const requestMulterOptions = {
   storage: diskStorage({
     destination: uploadDir,
     filename: (req, file, callback) => {
-      const uniqueSuffix = Date.now() + '_' + Math.round(Math.random() * 1e9);
-      const ext = extname(file.originalname);
-      callback(null, `rams_${uniqueSuffix}${ext}`);
+      const originalName = file.originalname || 'file';
+      const ext = extname(originalName);
+      const nameWithoutExt = originalName.substring(0, originalName.length - ext.length);
+      const cleanBaseName = nameWithoutExt.replace(/^rams[_-]/i, '');
+      const sanitizedBaseName = cleanBaseName.replace(/[/\\?%*:|"<>]/g, '_');
+
+      let targetFilename = `${sanitizedBaseName}${ext}`;
+      const filePath = join(uploadDir, targetFilename);
+
+      if (fs.existsSync(filePath)) {
+        targetFilename = `${sanitizedBaseName}_${Date.now()}${ext}`;
+      }
+
+      callback(null, targetFilename);
     },
   }),
   fileFilter: (req, file, callback) => {
-    // Allowed file types based on legacy mime mappings or file extension
-    const mimeRegex = /\/(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx|csv|mp4|webm|ogg|octet-stream|vnd.openxmlformats-officedocument.wordprocessingml.document|vnd.openxmlformats-officedocument.spreadsheetml.sheet|msword|vnd.ms-excel|zip|x-zip-compressed|x-rar-compressed|vnd.rar|x-7z-compressed|plain|dwg|x-dwg|vnd.dwg|vnd.ms-outlook)$/i;
-    const extRegex = /\.(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx|csv|mp4|webm|ogg|zip|rar|7z|txt|dwg|msg)$/i;
-
-    const isMimeValid = file.mimetype && mimeRegex.test(file.mimetype);
-    const isExtValid = file.originalname && extRegex.test(file.originalname);
-
-    if (!isMimeValid && !isExtValid) {
-      const errMsg = `Unsupported or corrupt file type: "${file.originalname}" (MimeType: "${file.mimetype || 'unknown'}")`;
-      console.error(errMsg);
-      return callback(new Error(errMsg), false);
-    }
     callback(null, true);
   },
 };
@@ -245,6 +244,49 @@ export class RequestsController {
     }
   }
 
+  // Upload/Add RAMS file attachments to an existing request (edit form)
+  @Post('files')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'rams_file', maxCount: 20 },
+        { name: 'rams_file[]', maxCount: 20 },
+      ],
+      requestMulterOptions,
+    ),
+  )
+  async addRamsFiles(
+    @Body() body: { id?: string | number; request_id?: string | number; requestId?: string | number; userId?: string | number; user_id?: string | number },
+    @UploadedFiles() files?: { rams_file?: any[]; 'rams_file[]'?: any[] },
+  ) {
+    try {
+      const ramsFiles = [
+        ...(files?.rams_file || []),
+        ...(files?.['rams_file[]'] || []),
+      ];
+      const reqId = body.id || body.request_id || body.requestId;
+      const uId = body.userId || body.user_id;
+
+      if (!reqId) {
+        return {
+          status: HttpStatus.BAD_REQUEST,
+          message: 'Request ID (id or request_id) is required',
+        };
+      }
+
+      return await this.requestsService.addRamsFiles(
+        Number(reqId),
+        ramsFiles,
+        Number(uId || 0),
+      );
+    } catch (error) {
+      return {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: error.message || 'Failed to upload RAMS files',
+      };
+    }
+  }
+
   // 8. Delete RAMS file attachment (ramsfiledelete.php)
   @Delete('files/:fileId')
   async softDeleteRamsFile(@Param('fileId') fileId: string) {
@@ -263,11 +305,29 @@ export class RequestsController {
       if (!file || !file.ramsFile) {
         return res.status(HttpStatus.NOT_FOUND).send('File not found');
       }
-      const absolutePath = join(process.cwd(), file.ramsFile);
-      if (!fs.existsSync(absolutePath)) {
+
+      const rawPath = file.ramsFile || '';
+      const filename = (rawPath ? rawPath.split('/').pop()?.split('\\').pop() : '') || 'Attachment';
+      const possiblePaths = [
+        join(process.cwd(), rawPath),
+        join(process.cwd(), 'uploads', 'requests', filename),
+        join(process.cwd(), './uploads/requests', filename),
+        join(process.cwd(), 'dist', 'uploads', 'requests', filename),
+        rawPath,
+      ];
+
+      let absolutePath = '';
+      for (const p of possiblePaths) {
+        if (p && fs.existsSync(p)) {
+          absolutePath = p;
+          break;
+        }
+      }
+
+      if (!absolutePath) {
         return res.status(HttpStatus.NOT_FOUND).send('File not found on disk');
       }
-      const filename = file.ramsFile.split('/').pop() || 'Attachment';
+
       res.download(absolutePath, filename);
     } catch (error) {
       res.status(HttpStatus.INTERNAL_SERVER_ERROR).send(error.message);

@@ -72,4 +72,4 @@ function checkRedisAlive(port = 6379, host = '127.0.0.1'): Promise<boolean> {
     RedisCacheService,
   ],
 })
-export class RedisModule { }
+export class RedisModule {}
