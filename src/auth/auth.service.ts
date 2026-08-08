@@ -434,7 +434,7 @@ export class AuthService {
     // Match superadmin email/username against local users table
     let user: any = null;
     try {
-      user = await this.usersService.findByUsername('north_admin')
+      user = await this.usersService.findByUsername('south_admin')
         || await this.usersService.findByUsername('admin');
 
       if (!user && introspectionData && introspectionData.email) {
