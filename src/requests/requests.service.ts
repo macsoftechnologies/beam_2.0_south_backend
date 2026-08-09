@@ -2426,7 +2426,16 @@ export class RequestsService {
     });
 
     const floorIdsSet = new Set<number>(directFloorIds);
-    const floorNamesSet = new Set<string>(nameTerms);
+    const floorNamesSet = new Set<string>();
+
+    nameTerms.forEach((term) => {
+      const trimmed = term.trim();
+      floorNamesSet.add(trimmed);
+      const baseName = trimmed.replace(/^(?:[A-Za-z0-9]+\s*[-:]?\s*)/, '').trim();
+      if (baseName && baseName !== trimmed) {
+        floorNamesSet.add(baseName);
+      }
+    });
 
     if (directFloorIds.length > 0) {
       try {
@@ -2436,6 +2445,8 @@ export class RequestsService {
         foundFloors.forEach((f) => {
           if (f && f.floor_name) {
             floorNamesSet.add(f.floor_name.trim());
+            const base = f.floor_name.replace(/^(?:[A-Za-z0-9]+\s*[-:]?\s*)/, '').trim();
+            if (base) floorNamesSet.add(base);
           }
         });
       } catch (e) {}
@@ -2443,14 +2454,21 @@ export class RequestsService {
 
     if (nameTerms.length > 0) {
       for (const nTerm of nameTerms) {
+        const fullTerm = nTerm.trim();
+        const baseTerm = nTerm.replace(/^(?:[A-Za-z0-9]+\s*[-:]?\s*)/, '').trim();
         try {
           const matchingFloors = await this.floorRepo
             .createQueryBuilder('f')
-            .where('f.floor_name LIKE :name', { name: `%${nTerm}%` })
+            .where('f.floor_name LIKE :full', { full: `%${fullTerm}%` })
+            .orWhere('f.floor_name LIKE :base', { base: `%${baseTerm}%` })
             .getMany();
           matchingFloors.forEach((f) => {
             if (f && f.fl_id) floorIdsSet.add(f.fl_id);
-            if (f && f.floor_name) floorNamesSet.add(f.floor_name.trim());
+            if (f && f.floor_name) {
+              floorNamesSet.add(f.floor_name.trim());
+              const base = f.floor_name.replace(/^(?:[A-Za-z0-9]+\s*[-:]?\s*)/, '').trim();
+              if (base) floorNamesSet.add(base);
+            }
           });
         } catch (e) {}
       }
