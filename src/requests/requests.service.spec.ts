@@ -431,11 +431,17 @@ describe('RequestsService - Validation and Zone Logic', () => {
         service['validateStatusTransitionAndRole'](mockRequest, 'cancelled', 2),
       ).resolves.not.toThrow();
 
-      // approved -> rejected (allowed)
-      mockRequest.requestStatus = 'approved';
+      // draft -> rejected (allowed for contractor)
+      mockRequest.requestStatus = 'draft';
       await expect(
         service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 2),
       ).resolves.not.toThrow();
+
+      // approved -> rejected (restricted for contractor, allowed only for final approving dept/admin)
+      mockRequest.requestStatus = 'approved';
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 2),
+      ).rejects.toThrow(/Contractor is not authorized/);
     });
 
     it('should validate department specific pre-approval and final approval rules', async () => {

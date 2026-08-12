@@ -187,9 +187,15 @@ export class RequestsService {
       .map((t) => t.trim())
       .filter(Boolean);
 
+    const isDeptUser = userTypes.includes('Department');
+    const isDept1User = userTypes.includes('Department1');
+    const isMultiDept = isDeptUser && isDept1User;
+
     if (userTypes.includes('Admin') || userTypes.includes('SuperAdmin')) {
       role = 'admin';
-    } else if (userTypes.includes('Department') || userTypes.includes('Department1')) {
+    } else if (isMultiDept) {
+      role = 'multi_dept';
+    } else if (isDeptUser || isDept1User) {
       // Department  = CONM (Construction Management / first-approval stream)
       // Department1 = C&Q  (Commissioning / second-approval stream)
       // Try to resolve the exact stream via the employee's department name first
@@ -206,10 +212,10 @@ export class RequestsService {
                 role = 'C&Q';
               } else {
                 // Generic department – default based on userType flag
-                role = userTypes.includes('Department1') ? 'C&Q' : 'CoNM';
+                role = isDept1User ? 'C&Q' : 'CoNM';
               }
             } else {
-              role = userTypes.includes('Department1') ? 'C&Q' : 'CoNM';
+              role = isDept1User ? 'C&Q' : 'CoNM';
             }
           } else if (employee.subContId) {
             role = 'contractor';
@@ -217,15 +223,15 @@ export class RequestsService {
             role = 'observer';
           } else {
             // Employee exists but no departId/subContId/obserId — treat by userType
-            role = userTypes.includes('Department1') ? 'C&Q' : 'CoNM';
+            role = isDept1User ? 'C&Q' : 'CoNM';
           }
         } else {
           // No employee record found – fall back to userType
-          role = userTypes.includes('Department1') ? 'C&Q' : 'CoNM';
+          role = isDept1User ? 'C&Q' : 'CoNM';
         }
       } else {
         // No empId on user – use userType directly
-        role = userTypes.includes('Department1') ? 'C&Q' : 'CoNM';
+        role = isDept1User ? 'C&Q' : 'CoNM';
       }
     } else if (userTypes.includes('Subcontractor')) {
       role = 'contractor';
@@ -276,17 +282,20 @@ export class RequestsService {
     }
 
     // Role-based restrictions
-    if (role === 'admin' || role === 'CoNM' || role === 'C&Q') {
+    if (role === 'admin' || role === 'multi_dept' || role === 'CoNM' || role === 'C&Q') {
       // Authorized departments/admin can transition
     } else if (role === 'contractor') {
       // Contractor can change status:
       // - between draft and hold (levels 1 & 2)
+      // - draft/hold -> rejected
       // - approved -> opened (level 4 -> 5)
       // - opened -> closed (level 5 -> 6)
-      // - active status -> cancelled or rejected
+      // - active status -> cancelled
       const allowedContractorTransitions = [
         ['draft', 'hold'],
         ['hold', 'draft'],
+        ['draft', 'rejected'],
+        ['hold', 'rejected'],
         ['approved', 'opened'],
         ['opened', 'closed'],
       ];
@@ -294,8 +303,7 @@ export class RequestsService {
         allowedContractorTransitions.some(
           ([from, to]) => normalizedCurrent === from && normalizedNew === to
         ) ||
-        normalizedNew === 'cancelled' ||
-        normalizedNew === 'rejected';
+        normalizedNew === 'cancelled';
 
       if (!isAllowed) {
         throw new BadRequestException(
@@ -325,7 +333,7 @@ export class RequestsService {
         );
       }
 
-      if (role !== 'admin') {
+      if (role !== 'admin' && role !== 'multi_dept') {
         if (isUnderConstTypeComm && role !== 'C&Q') {
           throw new BadRequestException('Pre-approval for Construction under Commissioning must be done by a C&Q department user');
         }
@@ -344,7 +352,7 @@ export class RequestsService {
         }
       }
 
-      if (role !== 'admin') {
+      if (role !== 'admin' && role !== 'multi_dept') {
         if (isBothConstruction && role !== 'CoNM') {
           throw new BadRequestException('Final approval for Construction-only permits must be done by a ConM department user');
         }
@@ -362,8 +370,14 @@ export class RequestsService {
 
     // Rule C: Transition to rejected
     if (normalizedNew === 'rejected') {
-      if (role !== 'admin' && role !== 'contractor') {
-        if (normalizedCurrent === 'draft' || normalizedCurrent === 'hold') {
+      if (role !== 'admin' && role !== 'multi_dept') {
+        if (role === 'contractor') {
+          if (normalizedCurrent !== 'draft' && normalizedCurrent !== 'hold') {
+            throw new BadRequestException(
+              `Contractor is not authorized to reject permits in '${existing.requestStatus}' status`
+            );
+          }
+        } else if (normalizedCurrent === 'draft' || normalizedCurrent === 'hold') {
           if (isBothConstruction && role !== 'CoNM') {
             throw new BadRequestException('Rejection for Construction-only permits must be done by a ConM department user');
           }
@@ -376,7 +390,13 @@ export class RequestsService {
           if (isUnderCommTypeConst && role !== 'CoNM') {
             throw new BadRequestException('Rejection at pre-approval stage for Commissioning under Construction must be done by a ConM department user');
           }
-        } else if (normalizedCurrent === 'pre-approved') {
+        } else if (normalizedCurrent === 'pre-approved' || normalizedCurrent === 'approved') {
+          if (isBothConstruction && role !== 'CoNM') {
+            throw new BadRequestException('Rejection for Construction-only permits must be done by a ConM department user');
+          }
+          if (isBothCommissioning && role !== 'C&Q') {
+            throw new BadRequestException('Rejection for Commissioning-only permits must be done by a C&Q department user');
+          }
           if (isUnderConstTypeComm && role !== 'CoNM') {
             throw new BadRequestException('Final rejection for Construction under Commissioning permits must be done by a ConM department user');
           }
@@ -892,16 +912,9 @@ export class RequestsService {
     if (dto.Request_status !== undefined && dto.Request_status !== '') {
       const normalizedNew = dto.Request_status.toLowerCase().trim();
       if (normalizedNew !== currentStatus) {
-        try {
-          await this.validateStatusTransitionAndRole(existing, normalizedNew, dto.userId ?? 0);
-          isStatusChanged = true;
-          finalRequestStatusForLog = dto.Request_status;
-        } catch (error) {
-          // If the status transition is invalid (e.g. trying to revert Approved to Draft during edit),
-          // we silently ignore the status change and do NOT update requestStatus in the requests table.
-          isStatusChanged = false;
-          finalRequestStatusForLog = 'Edited';
-        }
+        await this.validateStatusTransitionAndRole(existing, normalizedNew, dto.userId ?? 0);
+        isStatusChanged = true;
+        finalRequestStatusForLog = dto.Request_status;
       }
     } else if (dto.status !== undefined) {
       const normalizedNew = dto.status === 1 ? 'pending' : 'cancelled';
