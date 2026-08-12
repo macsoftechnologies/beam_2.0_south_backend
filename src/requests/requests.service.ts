@@ -266,9 +266,10 @@ export class RequestsService {
       );
     }
 
-    // Reversion check (except hold -> draft)
+    // Reversion check (except hold -> draft or terminal actions like cancel / reject)
     const isHoldToDraft = (normalizedCurrent === 'hold' && normalizedNew === 'draft');
-    if (newLevel < currentLevel && !isHoldToDraft) {
+    const isTerminalAction = (normalizedNew === 'cancelled' || normalizedNew === 'rejected');
+    if (newLevel < currentLevel && !isHoldToDraft && !isTerminalAction) {
       throw new BadRequestException(
         `Status cannot be reverted from '${existing.requestStatus}' to '${newStatus}'`
       );
@@ -278,19 +279,24 @@ export class RequestsService {
     if (role === 'admin' || role === 'CoNM' || role === 'C&Q') {
       // Authorized departments/admin can transition
     } else if (role === 'contractor') {
-      // Contractor can only change status:
+      // Contractor can change status:
       // - between draft and hold (levels 1 & 2)
       // - approved -> opened (level 4 -> 5)
       // - opened -> closed (level 5 -> 6)
+      // - active status -> cancelled or rejected
       const allowedContractorTransitions = [
         ['draft', 'hold'],
         ['hold', 'draft'],
         ['approved', 'opened'],
         ['opened', 'closed'],
       ];
-      const isAllowed = allowedContractorTransitions.some(
-        ([from, to]) => normalizedCurrent === from && normalizedNew === to
-      );
+      const isAllowed =
+        allowedContractorTransitions.some(
+          ([from, to]) => normalizedCurrent === from && normalizedNew === to
+        ) ||
+        normalizedNew === 'cancelled' ||
+        normalizedNew === 'rejected';
+
       if (!isAllowed) {
         throw new BadRequestException(
           `Contractor is not authorized to transition permit status from '${existing.requestStatus}' to '${newStatus}'`
@@ -356,7 +362,7 @@ export class RequestsService {
 
     // Rule C: Transition to rejected
     if (normalizedNew === 'rejected') {
-      if (role !== 'admin') {
+      if (role !== 'admin' && role !== 'contractor') {
         if (normalizedCurrent === 'draft' || normalizedCurrent === 'hold') {
           if (isBothConstruction && role !== 'CoNM') {
             throw new BadRequestException('Rejection for Construction-only permits must be done by a ConM department user');
