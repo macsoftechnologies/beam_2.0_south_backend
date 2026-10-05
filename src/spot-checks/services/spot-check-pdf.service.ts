@@ -231,6 +231,7 @@ export class SpotCheckPdfService {
 
         const candidatePaths = [
           filename,
+          join(process.cwd(), 'uploads', 'location-maps', filename),
           join(process.cwd(), 'uploads', 'spot-checks', filename),
           join(process.cwd(), 'uploads', filename),
           join(process.cwd(), cleanPath),
@@ -301,6 +302,7 @@ export class SpotCheckPdfService {
     const dateFormatted = this.formatDate(sc.date || sc.createdTime);
     const timeFormatted = sc.time || '';
     const locFormatted = sc.location || (sc.buildingName ? `${sc.buildingName} ${sc.floorLevel || ''}` : '');
+    const locationMapBase64 = sc.locationMapImage ? resolveImageDataUri(sc.locationMapImage) : null;
 
     // Header component
     const renderPageHeader = () => `
@@ -534,6 +536,21 @@ export class SpotCheckPdfService {
               </tr>
             </tbody>
           </table>
+
+          ${locationMapBase64 ? `
+          <div style="margin-top: 5px; margin-bottom: 5px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid;">
+            <div style="font-size: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; padding: 0 2px;">
+              <span style="display: flex; align-items: center; gap: 4px;">
+                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #16a34a;"></span>
+                Location Floor Map &bull; ${sc.buildingName || 'Building'} ${sc.floorLevel ? `(${sc.floorLevel})` : ''}
+              </span>
+              <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Work Area Layout</span>
+            </div>
+            <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; overflow: hidden; width: 100%;">
+              <img src="${locationMapBase64}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+            </div>
+          </div>
+          ` : ''}
 
           <div class="instructions-text">
             Instructions: Tick one response for each checkpoint. Use N/A only when the checkpoint does not apply. Record relevant facts in the comments field.
